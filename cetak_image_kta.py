@@ -1,23 +1,45 @@
 import time
 
+import aiohttp
+import asyncio
 import mysql.connector
 import requests
+from sshtunnel import SSHTunnelForwarder
 
 from dotenv import dotenv_values
 
 config = dotenv_values(".env")
 
-db = mysql.connector.connect(
-    host=config.get("DB_HOST"),
-    user=config.get("DB_USER"),
-    passwd=config.get("DB_PASS"),
-    database=config.get("DB_NAME")
-)
+
+def mysql_connect():
+    global connection
+
+    connection = mysql.connector.connect(
+        host=config.get("DB_HOST"),
+        user=config.get("DB_USER"),
+        passwd=config.get("DB_PASS"),
+        db=config.get("DB_NAME"),
+        port=tunnel.local_bind_port
+    )
+
+
+def open_ssh_tunnel():
+    global tunnel
+    tunnel = SSHTunnelForwarder(
+        (config.get("SSH_HOST"), 2124),
+        ssh_username=config.get("SSH_USERNAME"),
+        ssh_password=config.get("SSH_PASSWORD"),
+        remote_bind_address=("127.0.0.1", 10889)
+    )
+
+    tunnel.start()
 
 
 def cetak_image_kta_batch():
     limit = input("Masukkan limit : ")
-    cursor = db.cursor()
+    open_ssh_tunnel()
+    mysql_connect()
+    cursor = connection.cursor()
     sql = f"SELECT _id, desa, nik, jenis_kelamin, kecamatan, kota, m_user_id, nama, id_anggota, provinsi, createdAt, tanggal_lahir " \
           f"FROM Profile " \
           f"WHERE ctk_kta is null " \
@@ -73,10 +95,11 @@ def cetak_image_kta_batch():
 
         print(payload)
 
-        cetak_image_kta(payload)
+        # cetak_image_kta(payload)
+        asyncio.run(cetak_image_kta(payload))
 
 
-def cetak_image_kta(payload):
+async def cetak_image_kta(payload):
     url = config.get("BASE_API") + "ktaapi"
 
     headers = {
@@ -84,12 +107,14 @@ def cetak_image_kta(payload):
         'x-tag': config.get("X_TAG")
     }
 
-    with requests.session() as session:
-        with session.post(url, headers=headers, data=payload) as response:
-            data = response.text
+    # with requests.session() as session:
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, data=payload) as response:
+            print(response.status)
+            data = await response.text()
             print(data)
 
-            if response.status_code != 200:
+            if response.status != 200:
                 print("FAILURE::{0}".format(url))
             return data
 
